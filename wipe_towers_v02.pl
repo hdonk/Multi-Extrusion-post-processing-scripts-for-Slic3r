@@ -18,9 +18,9 @@ my $firstLayerHeight=0.1;
 my $retractionLength=5;
 my $toolChangeRetractionLength=5;
 
-my $bedWidth=160;
-my $bedDepth=165;
-my $extruders=2;
+my $bedWidth=200;
+my $bedDepth=200;
+my $extruders=3;
 
 # other params
 my $travelLift=1;
