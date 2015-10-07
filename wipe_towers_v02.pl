@@ -49,6 +49,8 @@ my $retractionFeedrate=75*60;
 my $travelFeedrate=150*60;
 my $printFeedrate=30*60;
 my $extrusionFeedrate=25*60;
+my $firstLayerSpeed=100;
+my $firstLayerPercent=-1;
 
 # state variables, keeping track of whats happening inside the G-code
 
@@ -145,20 +147,20 @@ sub squareTowerEPL{ # returns the gcode for printing a wipe tower
 	my $travelPoints=generatePreTravelPointsEN($p,$layer);
 	
 	$gcode.=lift($travelLift);
-	$gcode.=travelToXYF($travelPoints->[0]->[0],$travelPoints->[0]->[1],$travelFeedrate);
+	$gcode.=travelToXYF($travelPoints->[0]->[0],$travelPoints->[0]->[1],rate($layer,$travelFeedrate));
 	$gcode.=lower($travelLift);
-	$gcode.=travelToXYF($travelPoints->[1]->[0],$travelPoints->[1]->[1],$travelFeedrate);
+	$gcode.=travelToXYF($travelPoints->[1]->[0],$travelPoints->[1]->[1],rate($layer,$travelFeedrate));
 	
 	if($layer==0){
 		$gcode.=comment("printing brim");
 		for(my $loop=0;$loop<$wipeTowerBrimLoops;$loop++){
 			my $brimPoints=baseCornerBrimPointsELN($p,$loop,$layer);
-			$gcode.=travelToXYF($brimPoints->[0]->[0],$brimPoints->[0]->[1],$travelFeedrate);
+			$gcode.=travelToXYF($brimPoints->[0]->[0],$brimPoints->[0]->[1],rate($layer,$travelFeedrate));
 			if($loop==0){
 				$gcode.=extrudeEF(-$gcodeRetraction[$e], $retractionFeedrate); #$retractionLength
 			}
 			for(my $b=1;$b<5;$b++){
-				$gcode.=extrudeToXYFL($brimPoints->[$b]->[0],$brimPoints->[$b]->[1],$printFeedrate,$l);
+				$gcode.=extrudeToXYFL($brimPoints->[$b]->[0],$brimPoints->[$b]->[1],rate($layer,$printFeedrate),$l);
 			}
 			if($loop==$wipeTowerBrimLoops-1){
 				$gcode.=extrudeEF($gcodeRetraction[$e], $retractionFeedrate); #-$retractionLength
@@ -169,12 +171,12 @@ sub squareTowerEPL{ # returns the gcode for printing a wipe tower
 	$gcode.=comment("printing loops");
 	for(my $loop=0;$loop<$wipeTowerLoops;$loop++){
 		my $printPoints=baseCornerPointsELN($p,$loop,$layer);
-		$gcode.=travelToXYF($printPoints->[0]->[0],$printPoints->[0]->[1],$travelFeedrate);
+		$gcode.=travelToXYF($printPoints->[0]->[0],$printPoints->[0]->[1],rate($layer,$travelFeedrate));
 		if($loop==0){
 			$gcode.=extrudeEF(-$gcodeRetraction[$e], $retractionFeedrate); #$retractionLength
 		}
 		for(my $p=1;$p<5;$p++){
-			$gcode.=extrudeToXYFL($printPoints->[$p]->[0],$printPoints->[$p]->[1],$printFeedrate,$l);
+			$gcode.=extrudeToXYFL($printPoints->[$p]->[0],$printPoints->[$p]->[1],rate($layer,$printFeedrate),$l);
 		}
 		if($loop==$wipeTowerLoops-1){
 			$gcode.=extrudeEF($gcodeRetraction[$e], $retractionFeedrate); #-$retractionLength
@@ -370,7 +372,18 @@ sub generatePurgePosition{
 	return $positions->[$n%4];
 }
 
-
+sub rate{
+	my $layer=$_[0];
+	my $rate=$_[1];
+	if($layer==0){
+		if($firstLayerPercent){
+			$rate*=($firstLayerSpeed/100.0);
+		} else {
+			$rate=$firstLayerSpeed;
+		}
+	}
+	return $rate;
+}
 
 ##########
 # TRAVEL
@@ -703,7 +716,7 @@ sub insertWipeTowerEP{
 	if($l>0){
 		print squareTowerEPL($e,$p,$l);
 		print lift($travelLift);
-		print travelToXYF($gcodeX[$e],$gcodeY[$e],$travelFeedrate);
+		print travelToXYF($gcodeX[$e],$gcodeY[$e],rate($layer,$travelFeedrate));
 		print lower($travelLift);
 	}else{
 		print "; omitting wipe tower due to zero layer height\n";
@@ -811,6 +824,10 @@ sub readParams{ # collecting params
 	}
 	if($_[0]=~/extrusionFeedrate=(\d*\.?\d*)/){
 		$extrusionFeedrate=$1*60.0;
+	}
+	if($_[0]=~/firstLayerSpeed=(\d*\.?\d*)(.*)/){
+		$firstLayerSpeed=$1;
+		$firstLayerPercent=-1 if($2 eq "%");
 	}
 	if($_[0]=~/forceToolChanges=(true|false)/){
 		if($1 eq "true"){
