@@ -94,7 +94,12 @@ my @endOfLayerLines=();
 # MAIN LOOP
 ##########
 
-my (@gcode)=(<>);
+my (@gcode);
+while(<>)
+{
+	push(@gcode, $_);
+	last if(/top_solid_layers/);
+}
 # Check Slic3r version is at least 1.2.9
 if($gcode[0]!~/Slic3r (\d+)\.(\d+)\.(\d+)/)
 {
@@ -127,7 +132,6 @@ $travelFeedrate=$cfg{"travel_speed"}*60.0;
 $printFeedrate=$cfg{"perimeter_speed"}*60.0;
 
 initializeBuffer();
-
 foreach $_ (@gcode){
 	if($start==0){
   	readParams($_);
