@@ -7,7 +7,7 @@ use List::Util qw[min max];
 use constant PI    => 4 * atan2(1, 1);
 
 # printer parameters with default values
-
+my (%cfg);
 my $nozzleDiameter=0.4;
 my $filamentDiameter=1.75;
 my $extrusionMultiplier=1.0;
@@ -96,7 +96,15 @@ initializeBuffer();
 # MAIN LOOP
 ##########
 
-while (<>) {
+my (@gcode)=(<>);
+foreach $line (@gcode){
+	next unless($line=~/^;\s*(.*) = (.*)$/);
+	my $key=$1;
+	my $value=$2;
+	$cfg{$key}=$value;
+}
+
+foreach $_ (@gcode){
 	if($start==0){
   	readParams($_);
 		evaluateLine($_);
