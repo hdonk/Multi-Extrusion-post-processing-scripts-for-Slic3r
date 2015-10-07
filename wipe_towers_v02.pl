@@ -95,6 +95,18 @@ my @endOfLayerLines=();
 ##########
 
 my (@gcode)=(<>);
+# Check Slic3r version is at least 1.2.9
+if($gcode[0]!~/Slic3r (\d+)\.(\d+)\.(\d+)/)
+{
+	printf STDERR "That doesn't look like a Slic3r g-code script\n";
+	exit(1);
+}
+my ($maj,$min,$rel)=($1,$2,$3);
+if(($maj<1)||($maj==1&&$min<2)||($maj==1&&$min==2&&$rel<9))
+{
+	printf STDERR "Slic3r version less than 1.2.9 is not supported by wipe_towers\n";
+	exit(2);
+}
 foreach $line (@gcode){
 	next unless($line=~/^;\s*(.*) = (.*)$/);
 	my $key=$1;
