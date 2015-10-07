@@ -48,8 +48,8 @@ my $purgeAmount=3;
 my $retractionFeedrate=75*60;
 my $travelFeedrate=150*60;
 my $printFeedrate=30*60;
-my $firstLayerSpeed=100;
-my $firstLayerPercent=-1;
+my $firstLayerSpeed;
+my $firstLayerPercent;
 
 # state variables, keeping track of whats happening inside the G-code
 
@@ -102,6 +102,10 @@ foreach $line (@gcode){
 	my $key=$1;
 	my $value=$2;
 	$cfg{$key}=$value;
+}
+if($cfg{"first_layer_speed"}=~/(\d*\.?\d*)(.*)/){
+	$firstLayerSpeed=$1;
+	$firstLayerPercent=-1 if($2 eq "%");
 }
 
 foreach $_ (@gcode){
@@ -828,10 +832,6 @@ sub readParams{ # collecting params
 	}
 	if($_[0]=~/printFeedrate=(\d*\.?\d*)/){
 		$printFeedrate=$1*60.0;
-	}
-	if($_[0]=~/firstLayerSpeed=(\d*\.?\d*)(.*)/){
-		$firstLayerSpeed=$1;
-		$firstLayerPercent=-1 if($2 eq "%");
 	}
 	if($_[0]=~/forceToolChanges=(true|false)/){
 		if($1 eq "true"){
