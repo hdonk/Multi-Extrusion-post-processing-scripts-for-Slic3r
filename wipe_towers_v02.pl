@@ -48,7 +48,6 @@ my $purgeAmount=3;
 my $retractionFeedrate=75*60;
 my $travelFeedrate=150*60;
 my $printFeedrate=30*60;
-my $extrusionFeedrate=25*60;
 my $firstLayerSpeed=100;
 my $firstLayerPercent=-1;
 
@@ -821,9 +820,6 @@ sub readParams{ # collecting params
 	}
 	if($_[0]=~/printFeedrate=(\d*\.?\d*)/){
 		$printFeedrate=$1*60.0;
-	}
-	if($_[0]=~/extrusionFeedrate=(\d*\.?\d*)/){
-		$extrusionFeedrate=$1*60.0;
 	}
 	if($_[0]=~/firstLayerSpeed=(\d*\.?\d*)(.*)/){
 		$firstLayerSpeed=$1;
