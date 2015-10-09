@@ -16,7 +16,6 @@ my $extrusionWidth=$nozzleDiameter;
 my $layerHeight=0.2;
 my $firstLayerHeight=0.1;
 my (@retractionLength);
-my $toolChangeRetractionLength=5;
 
 my $bedWidth=160;
 my $bedDepth=165;
@@ -800,9 +799,6 @@ sub readParams{ # collecting params
 	}
 	if($_[0]=~/firstLayerHeight=(\d*\.?\d*)/){
 		$firstLayerHeight=$1*1.0;
-	}
-	if($_[0]=~/toolChangeRetractionLength=(\d*\.?\d*)/){
-		$toolChangeRetractionLength=$1*1.0;
 	}
 	if($_[0]=~/bedWidth=(\d*\.?\d*)/){
 		$bedWidth=$1*1.0;
