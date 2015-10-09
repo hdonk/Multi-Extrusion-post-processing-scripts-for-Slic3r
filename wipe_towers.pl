@@ -15,7 +15,7 @@ my $firstLayerExtrusionMultiplier=4.0;
 my $extrusionWidth=$nozzleDiameter;
 my $layerHeight=0.2;
 my $firstLayerHeight=0.1;
-my $retractionLength;
+my (@retractionLength);
 my $toolChangeRetractionLength=5;
 
 my $bedWidth=160;
@@ -130,7 +130,7 @@ for(my $i=0;$i<=$#retractionFeedrate;++$i)
 $extruders=$#retractionFeedrate+1;
 $travelFeedrate=$cfg{"travel_speed"}*60.0;
 $printFeedrate=$cfg{"perimeter_speed"}*60.0;
-$retractionLength=$cfg{"retract_length"};
+(@retractionLength)=split(/,/,$cfg{"retract_length"});
 
 initializeBuffer();
 foreach $_ (@gcode){
@@ -194,14 +194,14 @@ sub squareTowerEPL{ # returns the gcode for printing a wipe tower
 			$gcode.=travelToXYF($brimPoints->[0]->[0],$brimPoints->[0]->[1],rate($layer,$travelFeedrate));
 			if($loop==0){
 #				$gcode.=extrudeEF(-$gcodeRetraction[$e], $retractionFeedrate[$e]); #$retractionLength
-				$gcode.=extrudeEF($retractionLength, $retractionFeedrate[$e]); #$retractionLength
+				$gcode.=extrudeEF($retractionLength[$e], $retractionFeedrate[$e]); #$retractionLength
 			}
 			for(my $b=1;$b<5;$b++){
 				$gcode.=extrudeToXYFL($brimPoints->[$b]->[0],$brimPoints->[$b]->[1],rate($layer,$printFeedrate),$l);
 			}
 			if($loop==$wipeTowerBrimLoops-1){
 #				$gcode.=extrudeEF($gcodeRetraction[$e], $retractionFeedrate[$e]); #-$retractionLength
-				$gcode.=extrudeEF(-$retractionLength, $retractionFeedrate[$e]); #-$retractionLength
+				$gcode.=extrudeEF(-$retractionLength[$e], $retractionFeedrate[$e]); #-$retractionLength
 			}
 		}
 	}
@@ -212,14 +212,14 @@ sub squareTowerEPL{ # returns the gcode for printing a wipe tower
 		$gcode.=travelToXYF($printPoints->[0]->[0],$printPoints->[0]->[1],rate($layer,$travelFeedrate));
 		if($loop==0){
 #			$gcode.=extrudeEF(-$gcodeRetraction[$e], $retractionFeedrate[$e]); #$retractionLength
-			$gcode.=extrudeEF($retractionLength, $retractionFeedrate[$e]); #$retractionLength
+			$gcode.=extrudeEF($retractionLength[$e], $retractionFeedrate[$e]); #$retractionLength
 		}
 		for(my $p=1;$p<5;$p++){
 			$gcode.=extrudeToXYFL($printPoints->[$p]->[0],$printPoints->[$p]->[1],rate($layer,$printFeedrate),$l);
 		}
 		if($loop==$wipeTowerLoops-1){
 #			$gcode.=extrudeEF($gcodeRetraction[$e], $retractionFeedrate[$e]); #-$retractionLength
-			$gcode.=extrudeEF(-$retractionLength, $retractionFeedrate[$e]); #-$retractionLength
+			$gcode.=extrudeEF(-$retractionLength[$e], $retractionFeedrate[$e]); #-$retractionLength
 		}
 	}
 	return $gcode;
