@@ -1,9 +1,3 @@
-# WIPE TOWERS v01
-# PERL POSTPROCESSOR FOR ADDING WIPE TOWERS TO SLIC3R
-# YUNOMAKE.COM
-# AUTHOR: Moritz Walter 2015
-# LICENSED UNDER GPLv3 http://www.gnu.org/licenses/gpl-3.0.en.html
-
 #!/usr/bin/perl -i
 use strict;
 use warnings;
@@ -13,7 +7,7 @@ use List::Util qw[min max];
 use constant PI    => 4 * atan2(1, 1);
 
 # printer parameters with default values
-
+my (%cfg);
 my $nozzleDiameter=0.4;
 my $filamentDiameter=1.75;
 my $extrusionMultiplier=1.0;
@@ -21,12 +15,11 @@ my $firstLayerExtrusionMultiplier=4.0;
 my $extrusionWidth=$nozzleDiameter;
 my $layerHeight=0.2;
 my $firstLayerHeight=0.1;
-my $retractionLength=5;
-my $toolChangeRetractionLength=5;
+my (@retractionLength);
 
-my $bedWidth=160;
-my $bedDepth=165;
-my $extruders=2;
+my $bedWidth=200;
+my $bedDepth=200;
+my $extruders=3;
 
 # other params
 my $travelLift=1;
@@ -40,6 +33,7 @@ my $wipeTowerH=10;
 my $wipeTowerSpacing=20;
 my $wipeTowerLoops=5;
 my $wipeTowerBrimLoops=7;
+my $forceToolChanges=1;
 
 # wipe parameters with default values
 
@@ -50,10 +44,11 @@ my $purgeAmount=3;
 
 # printing parameters with default parameters, feedrates are multiplied by 60 on import for converting them from mm/s to mm/min
 
-my $retractionFeedrate=75*60;
-my $travelFeedrate=150*60;
-my $printFeedrate=30*60;
-my $extrusionFeedrate=25*60;
+my (@retractionFeedrate);
+my $travelFeedrate;
+my $printFeedrate;
+my $firstLayerSpeed;
+my $firstLayerPercent;
 
 # state variables, keeping track of whats happening inside the G-code
 
@@ -71,6 +66,8 @@ my $gcodeAbsolutePositioning=0;
 
 # state variables, keeping track of what we're doing
 
+my $scriptActiveExtruder=0;
+
 my $currentF=4500;
 my $currentE=0;
 my $currentX=0;
@@ -81,7 +78,7 @@ my $absoluteExtrusion=0;
 
 my $line=1;
 my $towerLayer=0;
-my $wipe=[0,0];
+my @scriptRetraction=();
 
 # processing variables
 
@@ -92,21 +89,50 @@ my $end = 0;
 my @linesByExtruder=();
 my @endOfLayerLines=();
 
-my $bypass=0;
-
-for(my $i=0;$i<$extruders;$i++){
-	$linesByExtruder[$i]=();
-	$gcodeX[$i]=0;
-	$gcodeY[$i]=0;
-	$gcodeE[$i]=0;
-	$gcodeRetraction[$i]=0;
-}
-
 ##########
 # MAIN LOOP
 ##########
 
-while (<>) {
+my (@gcode);
+while(<>)
+{
+	push(@gcode, $_);
+	last if(/top_solid_layers/);
+}
+# Check Slic3r version is at least 1.2.9
+if($gcode[0]!~/Slic3r (\d+)\.(\d+)\.(\d+)/)
+{
+	printf STDERR "That doesn't look like a Slic3r g-code script\n";
+	exit(1);
+}
+my ($maj,$min,$rel)=($1,$2,$3);
+if(($maj<1)||($maj==1&&$min<2)||($maj==1&&$min==2&&$rel<9))
+{
+	printf STDERR "Slic3r version less than 1.2.9 is not supported by wipe_towers\n";
+	exit(2);
+}
+foreach $line (@gcode){
+	next unless($line=~/^;\s*(.*) = (.*)$/);
+	my $key=$1;
+	my $value=$2;
+	$cfg{$key}=$value;
+}
+if($cfg{"first_layer_speed"}=~/(\d*\.?\d*)(.*)/){
+	$firstLayerSpeed=$1;
+	$firstLayerPercent=-1 if($2 eq "%");
+}
+(@retractionFeedrate)=split(/,/,$cfg{"retract_speed"});
+for(my $i=0;$i<=$#retractionFeedrate;++$i)
+{
+	$retractionFeedrate[$i]*=60.0;
+}
+$extruders=$#retractionFeedrate+1;
+$travelFeedrate=$cfg{"travel_speed"}*60.0;
+$printFeedrate=$cfg{"perimeter_speed"}*60.0;
+(@retractionLength)=split(/,/,$cfg{"retract_length"});
+
+initializeBuffer();
+foreach $_ (@gcode){
 	if($start==0){
   	readParams($_);
 		evaluateLine($_);
@@ -144,50 +170,55 @@ while (<>) {
 # PRINT TOWER
 ##########
 
-sub squareTowerEL{ # returns the gcode for printing a wipe tower
+sub squareTowerEPL{ # returns the gcode for printing a wipe tower
 	my $e=$_[0];
-	my $l=$_[1];
+	my $p=$_[1];
+	my $l=$_[2];
 	my $x=$wipeTowerX+$e*$wipeTowerSpacing;
 	my $y=$wipeTowerY;
 	my $gcode="";
 	
 	$gcode.=comment("printing square tower with layer height $l");
-	my $travelPoints=generatePreTravelPointsEN($e,$layer);
+	my $travelPoints=generatePreTravelPointsEN($p,$layer);
 	
-	#$gcode.=lift($travelLift);
-	$gcode.=travelToXYF($travelPoints->[0]->[0],$travelPoints->[0]->[1],$travelFeedrate);
-	#$gcode.=lower($travelLift);
-	$gcode.=travelToXYF($travelPoints->[1]->[0],$travelPoints->[1]->[1],$travelFeedrate);
+	$gcode.=lift($travelLift);
+	$gcode.=travelToXYF($travelPoints->[0]->[0],$travelPoints->[0]->[1],rate($layer,$travelFeedrate));
+	$gcode.=lower($travelLift);
+	$gcode.=travelToXYF($travelPoints->[1]->[0],$travelPoints->[1]->[1],rate($layer,$travelFeedrate));
 	
 	if($layer==0){
 		$gcode.=comment("printing brim");
 		for(my $loop=0;$loop<$wipeTowerBrimLoops;$loop++){
-			my $brimPoints=baseCornerBrimPointsELN($e,$loop,$layer);
-			$gcode.=travelToXYF($brimPoints->[0]->[0],$brimPoints->[0]->[1],$travelFeedrate);
+			my $brimPoints=baseCornerBrimPointsELN($p,$loop,$layer);
+			$gcode.=travelToXYF($brimPoints->[0]->[0],$brimPoints->[0]->[1],rate($layer,$travelFeedrate));
 			if($loop==0){
-				$gcode.=extrudeEF(-$gcodeRetraction[$e], $retractionFeedrate); #$retractionLength
+#				$gcode.=extrudeEF(-$gcodeRetraction[$e], $retractionFeedrate[$e]); #$retractionLength
+				$gcode.=extrudeEF($retractionLength[$e], $retractionFeedrate[$e]); #$retractionLength
 			}
-			for(my $p=1;$p<5;$p++){
-				$gcode.=extrudeToXYFL($brimPoints->[$p]->[0],$brimPoints->[$p]->[1],$printFeedrate,$l);
+			for(my $b=1;$b<5;$b++){
+				$gcode.=extrudeToXYFL($brimPoints->[$b]->[0],$brimPoints->[$b]->[1],rate($layer,$printFeedrate),$l);
 			}
 			if($loop==$wipeTowerBrimLoops-1){
-				$gcode.=extrudeEF($gcodeRetraction[$e], $retractionFeedrate); #-$retractionLength
+#				$gcode.=extrudeEF($gcodeRetraction[$e], $retractionFeedrate[$e]); #-$retractionLength
+				$gcode.=extrudeEF(-$retractionLength[$e], $retractionFeedrate[$e]); #-$retractionLength
 			}
 		}
 	}
 	
 	$gcode.=comment("printing loops");
 	for(my $loop=0;$loop<$wipeTowerLoops;$loop++){
-		my $printPoints=baseCornerPointsELN($e,$loop,$layer);
-		$gcode.=travelToXYF($printPoints->[0]->[0],$printPoints->[0]->[1],$travelFeedrate);
+		my $printPoints=baseCornerPointsELN($p,$loop,$layer);
+		$gcode.=travelToXYF($printPoints->[0]->[0],$printPoints->[0]->[1],rate($layer,$travelFeedrate));
 		if($loop==0){
-			$gcode.=extrudeEF(-$gcodeRetraction[$e], $retractionFeedrate); #$retractionLength
+#			$gcode.=extrudeEF(-$gcodeRetraction[$e], $retractionFeedrate[$e]); #$retractionLength
+			$gcode.=extrudeEF($retractionLength[$e], $retractionFeedrate[$e]); #$retractionLength
 		}
 		for(my $p=1;$p<5;$p++){
-			$gcode.=extrudeToXYFL($printPoints->[$p]->[0],$printPoints->[$p]->[1],$printFeedrate,$l);
+			$gcode.=extrudeToXYFL($printPoints->[$p]->[0],$printPoints->[$p]->[1],rate($layer,$printFeedrate),$l);
 		}
 		if($loop==$wipeTowerLoops-1){
-			$gcode.=extrudeEF($gcodeRetraction[$e], $retractionFeedrate); #-$retractionLength
+#			$gcode.=extrudeEF($gcodeRetraction[$e], $retractionFeedrate[$e]); #-$retractionLength
+			$gcode.=extrudeEF(-$retractionLength[$e], $retractionFeedrate[$e]); #-$retractionLength
 		}
 	}
 	return $gcode;
@@ -380,7 +411,18 @@ sub generatePurgePosition{
 	return $positions->[$n%4];
 }
 
-
+sub rate{
+	my $layer=$_[0];
+	my $rate=$_[1];
+	if($layer==0){
+		if($firstLayerPercent){
+			$rate*=($firstLayerSpeed/100.0);
+		} else {
+			$rate=$firstLayerSpeed;
+		}
+	}
+	return $rate;
+}
 
 ##########
 # TRAVEL
@@ -442,6 +484,22 @@ sub lower{
 ##########
 # EXTRUDE
 ##########
+
+sub logScriptExtrusion{ # ($tool,$extrusion) or ($extrusion) for $gcodeActiveExtruder
+	my $t=$gcodeActiveExtruder;
+	my $e=0;
+	if($#_==1){
+		$e=$_[0];
+	}elsif($#_==2){
+		$t=$_[0];
+		$e=$_[1];
+	}
+  $currentE+=$e;
+  $scriptRetraction[$t]+=$e;
+  if($scriptRetraction[$t]>0){
+  	$scriptRetraction[$t]=0;
+  }
+}
 
 sub extrudeEF{ # appends an extrusion (=printing) move
 	my $e=$_[0];
@@ -640,18 +698,22 @@ sub evaluateLine{
   			$gcodeZ+=$6;
   		}
   	}
-  	if($8){ # keeps track of relative extruder moves for each extruder, aiming to support absolute extrusion in the future
-  		if(!$2 && !$4 && !$6){
+  	if($8){ # keeps track of printing (and retraction) moves for each extruder (only relative extrusion mode)
+  		#$gcodeRetraction[$e]+=$8;
+  		#if($gcodeRetraction[$e]>0){
+  		#	$gcodeRetraction[$e]=0;
+  		#}
+  		
+  		#VERY BAD CODE MUST BE IGNORED BY READER THANK YOU
+  		if(!$2 && !$4 && !$6){ # must be a retraction move
   			if($8<0){
 					$gcodeRetraction[$e]+=$8;
-  			}else{
-  				if($8>0){
-  					if($8>-$gcodeRetraction[$e]){
-  						$gcodeRetraction[$e]=0;
-  					}else{
-							$gcodeRetraction[$e]+=$8;
-  					}
-			  	}
+  			}elsif($8>0){
+					if($8>-$gcodeRetraction[$e]){
+						$gcodeRetraction[$e]=0;
+					}else{
+						$gcodeRetraction[$e]+=$8;
+					}
 			  }
 	  	}
   	}
@@ -660,18 +722,22 @@ sub evaluateLine{
 
 sub insertSortedLayer{
 	for(my $e=0;$e<$extruders;$e++){
-		#if($#{$linesByExtruder[$e]}>-1){
-			print("; tool change\n");
-			print "T".$e."\n";
-			insertWipeTowerE($e);
+			if($forceToolChanges || $#{$linesByExtruder[$e]}>-1){ # only change the tool to print the tower if the tool is used, otherwise continue with current extruder
+
+				# this should be a tool change sub
+				print("; tool change\n");
+				print "T".$e."\n";
+				$scriptActiveExtruder=$e;
+				
+			}else{
+				print("; omitted tool change\n"); # printing wipe tower with current extruder, this makes sense if one of the extruders is not used for a while
+			}
+			insertWipeTowerEP($scriptActiveExtruder,$e);
 			for(my $i=0; $i<=$#{$linesByExtruder[$e]};$i++){
 				evaluateLine($linesByExtruder[$e][$i],$e);
 				print($linesByExtruder[$e][$i]);
 			}
 			@{$linesByExtruder[$e]}=();
-		#}else{
-			#print("; omitted tool change\n");
-		#}
 	}
 	if($#endOfLayerLines>-1){
 		print("; end of layer lines\n");
@@ -682,16 +748,29 @@ sub insertSortedLayer{
 	}
 }
 
-sub insertWipeTowerE{
+sub insertWipeTowerEP{
 	my $e=$_[0];
+	my $p=$_[1];
 	my $l=$gcodeZ-$lastGcodeZ;
 	if($l>0){
-		print squareTowerEL($e,$l);
+		print squareTowerEPL($e,$p,$l);
 		print lift($travelLift);
-		print travelToXYF($gcodeX[$e],$gcodeY[$e],$travelFeedrate);
+		print travelToXYF($gcodeX[$e],$gcodeY[$e],rate($layer,$travelFeedrate));
 		print lower($travelLift);
 	}else{
-		print "; omitting wipe tower\n";
+		print "; omitting wipe tower due to zero layer height\n";
+	}
+}
+
+sub initializeBuffer{
+	for(my $i=0;$i<$extruders;$i++){
+		my $travelPoints=generatePreTravelPointsEN($i,$layer);
+		$linesByExtruder[$i]=();
+		$gcodeX[$i]=$travelPoints->[0]->[0];
+		$gcodeY[$i]=$travelPoints->[0]->[1];
+		$gcodeE[$i]=0;
+		$gcodeRetraction[$i]=0;
+		$scriptRetraction[$i]=0;
 	}
 }
 
@@ -703,7 +782,11 @@ sub readParams{ # collecting params
 		$filamentDiameter=$1*1.0;
 	}
 	if($_[0]=~/extrusionWidth=(\d*\.?\d*)/){
-		$extrusionWidth=$1*1.0;
+		# Use the specified extrusion width, unless it is set to the "automatic" value of 0 (Slic3r default),
+		# in which case the pre-initialized value of $nozzleDiameter will be used
+		unless ( $1 eq "0" ) {
+		    $extrusionWidth=$1*1.0;
+		}
 	}
 	if($_[0]=~/extrusionMultiplier=(\d*\.?\d*)/){
 		$extrusionMultiplier=$1*1.0;
@@ -717,20 +800,11 @@ sub readParams{ # collecting params
 	if($_[0]=~/firstLayerHeight=(\d*\.?\d*)/){
 		$firstLayerHeight=$1*1.0;
 	}
-	if($_[0]=~/retractionLength=(\d*\.?\d*)/){
-		$retractionLength=$1*1.0;
-	}
-	if($_[0]=~/toolChangeRetractionLength=(\d*\.?\d*)/){
-		$toolChangeRetractionLength=$1*1.0;
-	}
 	if($_[0]=~/bedWidth=(\d*\.?\d*)/){
 		$bedWidth=$1*1.0;
 	}
 	if($_[0]=~/bedDepth=(\d*\.?\d*)/){
 		$bedDepth=$1*1.0;
-	}
-	if($_[0]=~/extruders=(\d*\.?\d*)/){
-		$extruders=$1*1.0;
 	}
 	if($_[0]=~/wipeTowerX=(\d*\.?\d*)/){
 		$wipeTowerX=$1*1.0;
@@ -768,16 +842,11 @@ sub readParams{ # collecting params
 	if($_[0]=~/purgeAmount=(\d*\.?\d*)/){
 		$purgeAmount=$1*1.0;
 	}
-	if($_[0]=~/retractionFeedrate=(\d*\.?\d*)/){
-		$retractionFeedrate=$1*60.0;
-	}
-	if($_[0]=~/travelFeedrate=(\d*\.?\d*)/){
-		$travelFeedrate=$1*60.0;
-	}
-	if($_[0]=~/printFeedrate=(\d*\.?\d*)/){
-		$printFeedrate=$1*60.0;
-	}
-	if($_[0]=~/extrusionFeedrate=(\d*\.?\d*)/){
-		$extrusionFeedrate=$1*60.0;
+	if($_[0]=~/forceToolChanges=(true|false)/){
+		if($1 eq "true"){
+			$forceToolChanges=1;
+		}elsif($1 eq "false"){
+			$forceToolChanges=0;
+		}
 	}
 }
