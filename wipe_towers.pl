@@ -80,6 +80,9 @@ my $line=1;
 my $towerLayer=0;
 my @scriptRetraction=();
 
+my (@Tseen)=(-1);
+my (@Tprinted)=(-1);
+
 # processing variables
 
 my $layer = 0;
@@ -174,6 +177,7 @@ sub squareTowerEPL{ # returns the gcode for printing a wipe tower
 	my $e=$_[0];
 	my $p=$_[1];
 	my $l=$_[2];
+	my $endOfLayerLines=$_[3];
 	my $x=$wipeTowerX+$e*$wipeTowerSpacing;
 	my $y=$wipeTowerY;
 	my $gcode="";
@@ -216,11 +220,17 @@ sub squareTowerEPL{ # returns the gcode for printing a wipe tower
 		for(my $p=1;$p<5;$p++){
 			$gcode.=extrudeToXYFL($printPoints->[$p]->[0],$printPoints->[$p]->[1],rate($layer,$printFeedrate),$l);
 		}
-		if($loop==$wipeTowerLoops-1){
+		if($loop==$wipeTowerLoops-1
+			&& (($Tprinted[$e] && $Tseen[$e]
+			&& $e!=$gcodeActiveExtruder)
+			|| ($endOfLayerLines>-1 && $e==$extruders-1)
+			)
+			){
 #			$gcode.=extrudeEF($gcodeRetraction[$e], $retractionFeedrate[$e]); #-$retractionLength
 			$gcode.=extrudeEF(-$retractionLength[$e], $retractionFeedrate[$e]); #-$retractionLength
 		}
 	}
+	$Tprinted[$e] = -1;
 	return $gcode;
 }
 
@@ -661,6 +671,7 @@ sub evaluateLine{
 	}
 	if ($_[0]=~/^T(\d)/){
 		$gcodeActiveExtruder=$1;
+		$Tseen[$1] = -1;
   }elsif(/^; next layer/){
   	$start=1;
   }elsif(/^G90/){
@@ -732,7 +743,7 @@ sub insertSortedLayer{
 			}else{
 				print("; omitted tool change\n"); # printing wipe tower with current extruder, this makes sense if one of the extruders is not used for a while
 			}
-			insertWipeTowerEP($scriptActiveExtruder,$e);
+			insertWipeTowerEP($scriptActiveExtruder,$e,$#endOfLayerLines);
 			for(my $i=0; $i<=$#{$linesByExtruder[$e]};$i++){
 				evaluateLine($linesByExtruder[$e][$i],$e);
 				print($linesByExtruder[$e][$i]);
@@ -751,9 +762,10 @@ sub insertSortedLayer{
 sub insertWipeTowerEP{
 	my $e=$_[0];
 	my $p=$_[1];
+	my $eoll=$_[2];
 	my $l=$gcodeZ-$lastGcodeZ;
 	if($l>0){
-		print squareTowerEPL($e,$p,$l);
+		print squareTowerEPL($e,$p,$l,$eoll);
 		print lift($travelLift);
 		print travelToXYF($gcodeX[$e],$gcodeY[$e],rate($layer,$travelFeedrate));
 		print lower($travelLift);
