@@ -82,6 +82,7 @@ my @scriptRetraction=();
 
 my (@Tseen)=(-1);
 my (@Tprinted)=(-1);
+my $done_first_tower=0;
 
 # processing variables
 
@@ -145,6 +146,7 @@ foreach $_ (@gcode){
 	}elsif (/^T(\d)/){
 		evaluateLine($_);
 	}elsif(/^; next layer/){
+		$done_first_tower=0;
 		# do nothing, strips line by not printing it back
 	}elsif(/^; tool change/){
 		# do nothing, strips line by not printing it back
@@ -178,16 +180,20 @@ sub squareTowerEPL{ # returns the gcode for printing a wipe tower
 	my $p=$_[1];
 	my $l=$_[2];
 	my $endOfLayerLines=$_[3];
+	my $jt=$_[4];
 	my $x=$wipeTowerX+$e*$wipeTowerSpacing;
 	my $y=$wipeTowerY;
 	my $gcode="";
 	
 	$gcode.=comment("printing square tower with layer height $l");
+	$gcode.=comment("dft $done_first_tower - ce $gcodeActiveExtruder - te $e - jt $jt");
 	my $travelPoints=generatePreTravelPointsEN($p,$layer);
 	
-	$gcode.=lift($travelLift);
+#	$gcode.=lift($travelLift);
+#	$gcode.=extrudeEF(-$retractionLength[$e], $retractionFeedrate[$e]) #-$retractionLength
+#		if($done_first_tower && $jt);
 	$gcode.=travelToXYF($travelPoints->[0]->[0],$travelPoints->[0]->[1],rate($layer,$travelFeedrate));
-	$gcode.=lower($travelLift);
+#	$gcode.=lower($travelLift);
 	$gcode.=travelToXYF($travelPoints->[1]->[0],$travelPoints->[1]->[1],rate($layer,$travelFeedrate));
 	
 	if($layer==0){
@@ -221,16 +227,22 @@ sub squareTowerEPL{ # returns the gcode for printing a wipe tower
 			$gcode.=extrudeToXYFL($printPoints->[$p]->[0],$printPoints->[$p]->[1],rate($layer,$printFeedrate),$l);
 		}
 		if($loop==$wipeTowerLoops-1
-			&& (($Tprinted[$e] && $Tseen[$e]
-			&& $e!=$gcodeActiveExtruder)
-			|| ($endOfLayerLines>-1 && $e==$extruders-1)
-			)
+			&& (!$done_first_tower || $jt)
+#			&& $e!=$gcodeActiveExtruder
+#			&& (
+#			(
+#			$Tprinted[$e] && $Tseen[$e]
+#			&&
+#			$e!=$gcodeActiveExtruder)
+#			|| ($endOfLayerLines>-1 && $e==$extruders-1)
+#			)
 			){
 #			$gcode.=extrudeEF($gcodeRetraction[$e], $retractionFeedrate[$e]); #-$retractionLength
 			$gcode.=extrudeEF(-$retractionLength[$e], $retractionFeedrate[$e]); #-$retractionLength
 		}
 	}
-	$Tprinted[$e] = -1;
+	$gcode.=comment("finished tower");
+	$done_first_tower=-1;
 	return $gcode;
 }
 
@@ -732,7 +744,9 @@ sub evaluateLine{
 }
 
 sub insertSortedLayer{
+	# Do tools with extrusion
 	for(my $e=0;$e<$extruders;$e++){
+		next unless $#{$linesByExtruder[$e]}>-1;
 			if($forceToolChanges || $#{$linesByExtruder[$e]}>-1){ # only change the tool to print the tower if the tool is used, otherwise continue with current extruder
 
 				# this should be a tool change sub
@@ -743,11 +757,27 @@ sub insertSortedLayer{
 			}else{
 				print("; omitted tool change\n"); # printing wipe tower with current extruder, this makes sense if one of the extruders is not used for a while
 			}
-			insertWipeTowerEP($scriptActiveExtruder,$e,$#endOfLayerLines);
+			insertWipeTowerEP($scriptActiveExtruder,$e,$#endOfLayerLines,0);
 			for(my $i=0; $i<=$#{$linesByExtruder[$e]};$i++){
 				evaluateLine($linesByExtruder[$e][$i],$e);
 				print($linesByExtruder[$e][$i]);
 			}
+	}
+	# Do tools which just have a tower
+	for(my $e=0;$e<$extruders;$e++){
+		next if $#{$linesByExtruder[$e]}>-1;
+		if($forceToolChanges || $#{$linesByExtruder[$e]}>-1){ # only change the tool to print the tower if the tool is used, otherwise continue with current extruder
+			# this should be a tool change sub
+			print("; tool change\n");
+			print "T".$e."\n";
+			$scriptActiveExtruder=$e;
+			
+		}else{
+			print("; omitted tool change\n"); # printing wipe tower with current extruder, this makes sense if one of the extruders is not used for a while
+		}
+		insertWipeTowerEP($scriptActiveExtruder,$e,$#endOfLayerLines,1);
+	}
+	for(my $e=0;$e<$extruders;$e++){
 			@{$linesByExtruder[$e]}=();
 	}
 	if($#endOfLayerLines>-1){
@@ -764,11 +794,12 @@ sub insertWipeTowerEP{
 	my $p=$_[1];
 	my $eoll=$_[2];
 	my $l=$gcodeZ-$lastGcodeZ;
+	my $jt=$_[3];
 	if($l>0){
-		print squareTowerEPL($e,$p,$l,$eoll);
-		print lift($travelLift);
-		print travelToXYF($gcodeX[$e],$gcodeY[$e],rate($layer,$travelFeedrate));
-		print lower($travelLift);
+		print squareTowerEPL($e,$p,$l,$eoll,$jt);
+#		print lift($travelLift);
+#		print travelToXYF($gcodeX[$e],$gcodeY[$e],rate($layer,$travelFeedrate));
+#		print lower($travelLift);
 	}else{
 		print "; omitting wipe tower due to zero layer height\n";
 	}
